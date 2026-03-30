@@ -52,7 +52,7 @@ def expire_iso(days: int) -> str:
     dt = datetime.now(timezone.utc) + timedelta(days=days)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
-def api(method: str, path: str, **kwargs):
+def api(method: str, path: str, raise_on_error: bool = True, **kwargs):
     url = f"{BASE_URL}{path}"
     resp = requests.request(method, url, headers=HEADERS, timeout=15, **kwargs)
     if not resp.ok:
@@ -60,8 +60,10 @@ def api(method: str, path: str, **kwargs):
             detail = resp.json()
         except Exception:
             detail = resp.text
-        sys.exit(f"❌  API error [{resp.status_code}] {path}\n    {detail}")
-    return resp.json()
+        if raise_on_error:
+            sys.exit(f"❌  API error [{resp.status_code}] {path}\n    {detail}")
+        return None, resp.status_code, detail
+    return resp.json(), resp.status_code, None
 
 def separator():
     print("─" * 48)
@@ -94,23 +96,24 @@ def main():
     if EXTERNAL_SQUAD:
         body["externalSquadUuid"] = EXTERNAL_SQUAD
 
-    # Internal squads — send as list
-    if INTERNAL_SQUAD:
-        uuids = [u.strip() for u in INTERNAL_SQUAD.split(",") if u.strip()]
-        body["activeUserInbounds"] = uuids   # field name used by Remnawave API
-
     # POST /api/users
-    data = api("POST", "/api/users", json=body)
+    data, _, _ = api("POST", "/api/users", json=body)
     user = data.get("response", data)
 
-    # If internal squad wasn't accepted in body, add via squad endpoint
-    if INTERNAL_SQUAD and not user.get("internalSquads"):
-        uuids = [u.strip() for u in INTERNAL_SQUAD.split(",") if u.strip()]
-        for squad_uuid in uuids:
-            try:
-                api("POST", f"/api/internal-squads/{squad_uuid}/users", json={"uuids": [user["uuid"]]})
-            except SystemExit:
-                print(f"  ⚠️   Could not assign internal squad {squad_uuid} (skipped)")
+    # Assign internal squad via PATCH /api/users/
+    if INTERNAL_SQUAD:
+        squad_uuids = [u.strip() for u in INTERNAL_SQUAD.split(",") if u.strip()]
+        result, status, err = api(
+            "PATCH",
+            "/api/users/",
+            json={"uuid": user["uuid"], "activeInternalSquads": squad_uuids},
+            raise_on_error=False,
+        )
+        if result is None:
+            print(f"  ⚠️   Could not assign internal squad(s)")
+            print(f"       Status: {status}  |  Error: {err}")
+        else:
+            print(f"  ✅  Internal squad(s) assigned")
 
     # ── Print result ────────────────────────────────────────────────────────────
     sub_url  = user.get("subscriptionUrl", "—")
