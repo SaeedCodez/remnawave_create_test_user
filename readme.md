@@ -10,6 +10,10 @@ cp .env.example .env
 ```
 python create_test_user.py
 ```
+OR
+```
+source venv/bin/activate && python3 create_test_user.py
+```
 
 Result:
 ```
